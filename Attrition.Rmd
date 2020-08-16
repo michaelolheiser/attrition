@@ -1,0 +1,355 @@
+---
+title: Exploratory Data Analysis of Attrition
+author: Michael Olheiser
+date: 8/15/2020
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(GGally)
+library(gridExtra)
+library(class)
+library(caTools)
+library(caret)
+library(e1071)
+
+```
+
+## Introduction
+video link: https://youtu.be/qj-pLmC59zE  
+
+Attrition is a key consideration for any successful company. It is strategic to identify components of a business that contribute to higher turnover rates in employees so the company can implement strategies to improve employee satisfaction. This report seeks to identify attributes of employees and their relation to the business that contribute to attrition. Specifically, we are interested in identifying the top three attributes that contribute to attrition, discovering trends in attrition per job, and predicting employee attrition using a classification algorithm.  
+  
+```{r read_and_clean, echo=FALSE}
+data<-read.csv("CaseStudy2_data.csv")
+data$ID<-as.character(data$ID)
+data$EmployeeNumber<-as.character(data$EmployeeNumber)
+
+#change ordinal integers to factors
+data$EnvironmentSatisfaction<-as.factor(data$EnvironmentSatisfaction)
+data$JobInvolvement<-as.factor(data$JobInvolvement)
+data$JobSatisfaction<-as.factor(data$JobSatisfaction)
+data$RelationshipSatisfaction<-as.factor(data$RelationshipSatisfaction)
+data$PerformanceRating<-as.factor(data$PerformanceRating)
+data$WorkLifeBalance<-as.factor(data$WorkLifeBalance)
+levels(data$PerformanceRating) <- c(levels(data$PerformanceRating), 1, 2)
+data$PerformanceRating<-factor(data$PerformanceRating, levels = c(1, 2, 3, 4))
+
+
+```
+
+```{r intro, message=FALSE}
+data %>% ggplot(aes(x=Attrition, fill=Attrition)) +
+  geom_bar() +
+  ggtitle("Count of Employees by Attrition Status") +
+  theme(legend.position = "none")
+
+``` 
+
+## Employee Survey Results
+
+It's a common practice for companies to gauge their employees' satisfaction through self-reported surveys. Our data set contains the survey results of various survey responses such as job satisfaction and work life balance that are ranked on a scale of 1 to 4 by the employees. Among our 7 survey questions, we determined the proportion of employees with attrition for each answer in the survey. For reference, the overall population attrition rate is 13%. The plot below shows the percentage of employees that left for each question and answer. The most concerning are Job Involvement and Work Life Balance. Employees that gave those areas a low ranking were more likely to leave their company. Nearly 50% of those that ranked Job Involvement as a 1 would end up leaving.  
+
+
+```{r survey, echo=FALSE}
+
+survey<-c("EnvironmentSatisfaction", "JobInvolvement", "JobLevel", "JobSatisfaction", "PerformanceRating",
+          "RelationshipSatisfaction", "WorkLifeBalance")
+
+#initialize data frame
+df<-data.frame(SurveyQuestion = survey, r1 = 0, r2 = 0, r3 = 0, r4 = 0)
+
+# create pivot tables for all survey results. ouput % of Attrition = Yes to data frame
+for (i in 1:length(survey)) {
+t<-with(data, table(data$Attrition, data[,which(colnames(data)==survey[i])])) %>% prop.table(margin = 2)
+#export attiriton % to data frame 
+df[i,2] = t[2,1]
+df[i,3] = t[2,2]
+df[i,4] = t[2,3]
+df[i,5] = t[2,4]
+}
+
+df %>% gather(Rating, Attrition, r1:r4) %>%
+ ggplot(aes(x=SurveyQuestion, y=Rating)) +
+geom_tile(mapping = aes(fill = Attrition)) +
+  scale_x_discrete(position = "top") +
+theme(axis.text.x = element_text(angle = 45, hjust = -0.1))
+  
+
+```
+
+## Employee and Job Characteristics
+
+Our dataset contains various characteristics of the employee such as Gender and Marital Status as well as specifics about the job itself such as Department, Travel Requirements and more. Due to the large number of attributes, we have shown attributes below that indicate a possible contributing to attrition. The bar charts below show the percentage of each category that left the company. There is some evidence here to suggest that Sales Departments are more likely to experience turnover especially those that are single, experience high travel and work over time. 
+
+```{r categoricals, echo=FALSE, message=FALSE}
+
+p1<- data %>% select(Attrition,  EducationField) %>%
+   gather(key = "Attrition", value = "EducationField") %>%
+          group_by(EducationField) %>%
+          mutate(total = n()) %>%
+  group_by(Attrition, total, EducationField) %>%
+          summarise(group_total = n()) %>%
+          mutate(pctAttrition = group_total / total) %>%
+  ggplot(aes(x = EducationField, y=pctAttrition, fill=Attrition)) +
+  geom_bar(stat='identity', alpha=1) +
+    geom_text(aes(label = group_total), position = position_stack(vjust = 0.5), color="white", size=5) +
+      scale_fill_manual(name = "Attrition", values = c('steelblue', 'tomato3')) +
+      labs(title = "EducationField", x="", y = "% of Employees") 
+
+p2<- data %>% select(Attrition,  Department) %>%
+   gather(key = "Attrition", value = "Department") %>%
+          group_by(Department) %>%
+          mutate(total = n()) %>%
+  group_by(Attrition, total, Department) %>%
+          summarise(group_total = n()) %>%
+          mutate(pctAttrition = group_total / total) %>%
+  ggplot(aes(x = Department, y=pctAttrition, fill=Attrition)) +
+  geom_bar(stat='identity', alpha=1) +
+    geom_text(aes(label = group_total), position = position_stack(vjust = 0.5), color="white", size=5) +
+      scale_fill_manual(name = "Attrition", values = c('steelblue', 'tomato3')) +
+      labs(title = "Department", x="", y = "% of Employees") 
+
+
+p3<-data %>% select(Attrition,  Gender) %>%
+   gather(key = "Attrition", value = "Gender") %>%
+          group_by(Gender) %>%
+          mutate(total = n()) %>%
+  group_by(Attrition, total, Gender) %>%
+          summarise(group_total = n()) %>%
+          mutate(pctAttrition = group_total / total) %>%
+  ggplot(aes(x = Gender, y=pctAttrition, fill=Attrition)) +
+  geom_bar(stat='identity', alpha=1) +
+    geom_text(aes(label = group_total), position = position_stack(vjust = 0.5), color="white", size=5) +
+      scale_fill_manual(name = "Attrition", values = c('steelblue', 'tomato3')) +
+      labs(title = "Gender", x="", y = "% of Employees") 
+
+
+p4<-data %>% select(Attrition,  JobRole) %>%
+   gather(key = "Attrition", value = "JobRole") %>%
+          group_by(JobRole) %>%
+          mutate(total = n()) %>%
+  group_by(Attrition, total, JobRole) %>%
+          summarise(group_total = n()) %>%
+          mutate(pctAttrition = group_total / total) %>%
+  ggplot(aes(x = JobRole, y=pctAttrition, fill=Attrition)) +
+  geom_bar(stat='identity', alpha=1) +
+    geom_text(aes(label = group_total), position = position_stack(vjust = 0.5), color="white", size=5) +
+      scale_fill_manual(name = "Attrition", values = c('steelblue', 'tomato3')) +
+      labs(title = "JobRole", x="", y = "% of Employees") +
+      theme(axis.text.x = element_text(angle = 45, hjust=1))
+    
+p5<-data %>% select(Attrition,  MaritalStatus) %>%
+   gather(key = "Attrition", value = "MaritalStatus") %>%
+          group_by(MaritalStatus) %>%
+          mutate(total = n()) %>%
+  group_by(Attrition, total, MaritalStatus) %>%
+          summarise(group_total = n()) %>%
+          mutate(pctAttrition = group_total / total) %>%
+  ggplot(aes(x = MaritalStatus, y=pctAttrition, fill=Attrition)) +
+  geom_bar(stat='identity', alpha=1) +
+    geom_text(aes(label = group_total), position = position_stack(vjust = 0.5), color="white", size=5) +
+      scale_fill_manual(name = "Attrition", values = c('steelblue', 'tomato3')) +
+      labs(title = "MaritalStatus", x="", y = "% of Employees")
+
+
+p6<- data %>% select(Attrition,  BusinessTravel) %>%
+   gather(key = "Attrition", value = "BusinessTravel") %>%
+          group_by(BusinessTravel) %>%
+          mutate(total = n()) %>%
+  group_by(Attrition, total, BusinessTravel) %>%
+          summarise(group_total = n()) %>%
+          mutate(pctAttrition = group_total / total) %>%
+  ggplot(aes(x = BusinessTravel, y=pctAttrition, fill=Attrition)) +
+  geom_bar(stat='identity', alpha=1) +
+    geom_text(aes(label = group_total), position = position_stack(vjust = 0.5), color="white", size=5) +
+      #scale_x_discrete(limits = c(Yes, No)) +
+      scale_fill_manual(name = "Attrition", values = c('steelblue', 'tomato3')) +
+      labs(title = "BusinessTravel", x="", y = "% of Employees") 
+
+p7<- data %>% select(Attrition,  OverTime) %>%
+   gather(key = "Attrition", value = "OverTime") %>%
+          group_by(OverTime) %>%
+          mutate(total = n()) %>%
+  group_by(Attrition, total, OverTime) %>%
+          summarise(group_total = n()) %>%
+          mutate(pctAttrition = group_total / total) %>%
+  ggplot(aes(x = OverTime, y=pctAttrition, fill=Attrition)) +
+  geom_bar(stat='identity', alpha=1) +
+    geom_text(aes(label = group_total), position = position_stack(vjust = 0.5), color="white", size=5) +
+      #scale_x_discrete(limits = c(Yes, No)) +
+      scale_fill_manual(name = "Attrition", values = c('steelblue', 'tomato3')) +
+      labs(title = "OverTime",x="", y = "% of Employees") 
+      
+grid.arrange(p7, p5)
+grid.arrange(p6, p2)
+grid.arrange(p4)
+
+
+
+```
+
+## Numerical Attributes of Attrition
+
+This report has discussed various survey results and categorical attributes of employees and their job. In this section, we will uncover some trends in Attrition using numerical attributes such as monthly income, and age. Below we can see various box plots for each attribute grouped by Attrition in order to assess if there is any visual evidence that the attribute is associated with Attrition. In general those with lower incomes, lower age, less experience, and a longer commute are more likely to leave their company.   
+
+
+```{r numericals, echo=FALSE, message=FALSE}
+
+gplot<-data %>% select (Attrition, Age, DistanceFromHome, MonthlyIncome,
+              NumCompaniesWorked, PercentSalaryHike,
+              TotalWorkingYears,TrainingTimesLastYear,YearsAtCompany, YearsInCurrentRole,
+              YearsSinceLastPromotion,YearsWithCurrManager) %>%
+               ggpairs(aes(fill=Attrition)) 
+         
+gplot1<-getPlot(gplot, 1, 4) + guides(fill=FALSE) + scale_fill_manual(values = c('steelblue', 'tomato3'))
+gplot2<-getPlot(gplot, 1, 2) + guides(fill=FALSE) + scale_fill_manual(values = c('steelblue', 'tomato3'))
+gplot3<-getPlot(gplot, 1, 10) + guides(fill=FALSE) + scale_fill_manual(values = c('steelblue', 'tomato3'))
+gplot4<-getPlot(gplot, 1, 12) + guides(fill=FALSE) + scale_fill_manual(values = c('steelblue', 'tomato3'))
+gplot5<-getPlot(gplot, 1, 3) + guides(fill=FALSE) + scale_fill_manual(values = c('steelblue', 'tomato3'))
+gplot6<-getPlot(gplot, 1, 9) + guides(fill=FALSE) + scale_fill_manual(values = c('steelblue', 'tomato3'))
+gplot7<-getPlot(gplot, 1, 7) + guides(fill=FALSE) + scale_fill_manual(values = c('steelblue', 'tomato3'))
+gplot8<-getPlot(gplot, 1, 9) + guides(fill=FALSE) + scale_fill_manual(values = c('steelblue', 'tomato3'))
+gplot9<-getPlot(gplot, 1, 10) + guides(fill=FALSE) + scale_fill_manual(values = c('steelblue', 'tomato3'))
+gplot10<-getPlot(gplot, 1, 11) + guides(fill=FALSE) + scale_fill_manual(values = c('steelblue', 'tomato3'))
+gplot11<-getPlot(gplot, 1, 12) + guides(fill=FALSE) + scale_fill_manual(values = c('steelblue', 'tomato3'))
+
+
+grid.arrange(gplot1, gplot2, nrow=1)
+grid.arrange(gplot3, gplot4, nrow=1)
+grid.arrange(gplot5, gplot6, nrow=1)
+```
+  
+We have conducted a student's t-test on each attribute to assess if the differences were statistically significant when bifurcating by Attrition. The table below shows 6 attributes with a p value<0.05 and those plots are also shown above. It's important to note as well, that Monthly Income correlates with job experience and tenure.   
+
+```{r ttest, message=FALSE}
+# run t test on all numerical columns
+ 
+numericals<-c("Age", "DailyRate", "DistanceFromHome", "HourlyRate", "MonthlyIncome",
+            "MonthlyRate", "NumCompaniesWorked", "PercentSalaryHike",
+              "TotalWorkingYears","TrainingTimesLastYear","YearsAtCompany", "YearsInCurrentRole",
+              "YearsSinceLastPromotion","YearsWithCurrManager")
+
+df_ttest<-data.frame(Attribute = numericals, pvalue = 0,  EffectSize = 0)
+for (i in 1:length(numericals)) {
+t<-t.test(data[,which(colnames(data)==numericals[i])]~data$Attrition)
+
+df_ttest[i,2] = t$p.value
+df_ttest[i,3] = abs(t$estimate[2] - t$estimate[1]) / t$stderr
+}
+
+library(kableExtra)
+kable(df_ttest[order(df_ttest$pvalue),], caption = "T Test Results for Numerical Attributes") %>%  kable_styling()
+detach("package:kableExtra", unload=TRUE)
+
+
+
+
+
+```
+  
+## Classifying Attrition with KNN
+
+K Nearest Neighbors or KNN is a classification algorithm that will help us classify employees in terms of Attrition by the attributes we have analyzed so far. From our results above, we can now select some key attributes to achieve a more accurate classification model. Our model includes Monthly Incomes, Job Involvement, and Work Life Balance. Note that categorical variables are omitted from KNN due to the limitations of the algorithm. The table below displays the accuracy , Sensitivity and Specificity of the model.   
+
+
+```{r knn, message=FALSE}
+# Split data into test/train and build KNN
+
+set.seed(1000)
+iterations = 100
+splitPerc = .70
+trainIndices = sample(1:dim(data)[1],round(splitPerc * dim(data)[1]))
+train = data[trainIndices,]
+test = data[-trainIndices,]
+
+data$logMonthlyIncome<-log(data$MonthlyIncome)
+
+predictors<-c(which(colnames(data)=="MonthlyIncome"),
+              which(colnames(data)=="WorkLifeBalance"),
+             which(colnames(data)=="JobInvolvement")
+)
+    
+# peform 100 iterations to find the best K value for KNN
+accs = data.frame(accuracy = numeric(iterations), k = numeric(iterations))
+for(i in 1:iterations)
+{
+    classifications = knn(train[,predictors],test[,predictors],train$Attrition, prob = TRUE, k = i)
+    table(test$Attrition,classifications)
+    CM = confusionMatrix(table(test$Attrition,classifications))
+  accs$accuracy[i] = CM$overall[1]
+  accs$k[i] = i
+}
+
+#plot(accs$k,accs$accuracy, type = "l", xlab = "k", ylab="Accuracy")
+
+classifications = knn(train[,predictors],test[,predictors],train$Attrition, prob = TRUE, k = 7) 
+
+CM = confusionMatrix(table(test$Attrition,classifications))
+
+knn_results<-data.frame(Model="KNN for Attrition", 
+           Accuracy=CM$overall[1], 
+           Sensitivity=CM$byClass[1], 
+           Specificity=CM$byClass[2])
+
+library(kableExtra)
+kable(table(test$Attrition,classifications),caption="Confusion Matrix for Classifying Attrition (Columns are Predictions)") %>% kable_styling()
+kable(knn_results) %>% kable_styling()
+
+# predict attrition
+# test_noAttrition<-read.csv("/Users/molheiser/Downloads/CaseStudy2CompSet_No_Attrition.csv")
+# 
+# predictors_noAtt<-c(which(colnames(test_noAttrition)=="MonthlyIncome"),
+#               which(colnames(test_noAttrition)=="JobInvolvement"),
+#               which(colnames(test_noAttrition)=="WorkLifeBalance")
+# )
+# classifications_noAttrition = knn(data[,predictors],test_noAttrition[,predictors_noAtt], data$Attrition, k = 7)
+# 
+# predicted_Attrition<-data.frame("ID" = test_noAttrition$ID, "Attrition"= classifications_noAttrition )
+# write.csv(predicted_Attrition, "Case2PredictionsOlheiser Attrition.csv")
+```
+
+## Linear Regression for Monthly Salaries
+
+Linear Regression is a tool to combine numerical and categorical variables to make predictions like the Monthly Salaries of Employees. Using our analysis of various atributes in previous sections, we built a linear model using TotalWorkingYears,  YearsAtCompany,JobRole, and JobLevel. Our goal was to achieve a RMSE<$3000 which was accomplished. In general, Income is a left skewed dsitrbution and that is the case again here but we are ocnfident in the use of linear regression due to the large sample and strong correlation with other factors. Below is a historgram of Monthyl Income colored by Job Level. Managers, directors, and researchers appear to have higher salaries than Sales people, Lab Techs, and HR. 
+
+```{r linreg, message=FALSE}
+
+data%>% ggplot(aes(x=MonthlyIncome, fill=JobRole)) +
+  geom_histogram() +
+  ggtitle("Distributon of Monthly Income by Job Role")
+
+model<-lm(MonthlyIncome~TotalWorkingYears + YearsAtCompany + JobRole + JobLevel , data=data)
+#summary(model)
+# calculate RMSE
+res<-summary(model)
+RSS <- c(crossprod(res$residuals))
+MSE <- RSS / length(res$residuals)
+summary(model)
+sqrt(MSE)
+
+# predict salaries 
+# test_noSalary<-read.csv("/Users/molheiser/Downloads/CaseStudy2CompSet_No_Salary.csv")
+# pred<-predict(model, newdata=test_noSalary)
+# predictedSalary<-data.frame("ID" = test_noSalary$ID, "MonthlyIncome" = pred)
+# write.csv(predictedSalary, "Case2PredictionsOlheiser Salary.csv")
+
+
+```
+
+## Conclusions
+
+We explored various attributes of employees, their job, and survey responses to determine key factors contributing to Attrition. We discovered that employees ranking Work Life Balance and Job Involvement low are more likely to leave the company. Furthermore, employees that are Sales Representatives appear to experience higher turnover than other job roles possibly due to the amount of travel required. It's important to note that none of these factors necessarily cause Attrition but are associated with Attrition.
+
+
+
+
+
+
+
+
+
+
+
